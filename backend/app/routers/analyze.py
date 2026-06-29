@@ -21,4 +21,6 @@ async def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
             "Sounds good, let's proceed.",
         ],
         sentiment="neutral",
+        tone="formal",
+        grammar_issues=[],
     )

@@ -13,4 +13,27 @@ class AnalyzeResponse(BaseModel):
     summary: str
     action_items: list[str]
     quick_replies: list[str]
-    sentiment: str  # "positive" | "neutral" | "negative"
+    sentiment: str   # "positive" | "neutral" | "negative"
+    tone: str        # "formal" | "informal" | "urgent" | "friendly"
+    grammar_issues: list[str]
+
+
+# Top 5 languages by global business/internet usage
+SUPPORTED_LANGUAGES: dict[str, str] = {
+    "Spanish": "es",
+    "French": "fr",
+    "German": "de",
+    "Portuguese": "pt",
+    "Japanese": "ja",
+}
+
+
+class TranslateRequest(BaseModel):
+    text: str
+    target_language: str  # must be a key in SUPPORTED_LANGUAGES
+
+
+class TranslateResponse(BaseModel):
+    translated_text: str
+    source_language: str
+    target_language: str

@@ -1,1 +1,10 @@
-/* MailMind content styles */
+/* Tailwind utilities for the content script (base layer omitted to avoid
+   resetting Gmail's own styles) */
+@tailwind components;
+@tailwind utilities;
+
+/* Ensure our root container is never affected by Gmail's global resets */
+#mailmind-root,
+#mailmind-root * {
+  box-sizing: border-box;
+}
