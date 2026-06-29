@@ -1,0 +1,3 @@
+/* Omit @tailwind base to avoid resetting Gmail's styles */
+@tailwind components;
+@tailwind utilities;

@@ -26,15 +26,14 @@
   },
 
   "background": {
-    "service_worker": "src/background/service-worker.js",
+    "service_worker": "src/background/service-worker.ts",
     "type": "module"
   },
 
   "content_scripts": [
     {
       "matches": ["https://mail.google.com/*"],
-      "js": ["src/content/index.js"],
-      "css": ["src/content/index.css"],
+      "js": ["src/content/index.tsx"],
       "run_at": "document_idle"
     }
   ],
