@@ -58,3 +58,15 @@ export interface GrammarResponse {
 
 export const checkGrammar = (text: string) =>
   post<GrammarResponse>('/api/v1/grammar', { text })
+
+export type ToneVariant = 'formal' | 'friendly' | 'concise' | 'persuasive' | 'executive' | 'professional'
+
+export interface ToneRewriteResponse {
+  rewritten: string
+  tone: string
+  changes_summary: string
+  truncated: boolean
+}
+
+export const rewriteTone = (text: string, tone: ToneVariant) =>
+  post<ToneRewriteResponse>('/api/v1/rewrite-tone', { text, tone })
