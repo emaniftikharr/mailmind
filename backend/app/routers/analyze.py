@@ -40,8 +40,8 @@ async def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
     return AnalyzeResponse(
         email_id=req.email_id,
         summary=data.get("summary", ""),
-        action_items=data.get("action_items", []),
-        quick_replies=data.get("quick_replies", []),
+        action_items=data.get("action_items") or [],
+        quick_replies=data.get("quick_replies") or [],
         sentiment=data.get("sentiment", "neutral"),
         tone=data.get("tone", "formal"),
         grammar_issues=data.get("grammar_issues", []),
