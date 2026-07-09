@@ -62,7 +62,7 @@ class GrammarResponse(BaseModel):
 
 
 class TranslateRequest(BaseModel):
-    text: str
+    text: str = Field(min_length=1)
     target_language: str  # must be a key in SUPPORTED_LANGUAGES
 
 
