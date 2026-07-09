@@ -60,3 +60,33 @@ export function setGmailMargin(px: number): void {
   const el = findScrollContainer()
   if (el) el.style.marginRight = px > 0 ? `${px}px` : ''
 }
+
+export interface EmailData {
+  emailId: string
+  subject: string
+  body: string
+  sender: string
+}
+
+/** Scrape the open email's subject, body text, and sender from the Gmail DOM. */
+export function scrapeEmailData(): EmailData | null {
+  const hash = window.location.hash
+  const threadMatch = hash.match(/[A-Za-z0-9]{10,}/)
+  if (!threadMatch) return null
+  const emailId = threadMatch[0]
+
+  const subjectEl = document.querySelector<HTMLElement>('h2[data-thread-perm-id], .hP')
+  const subject = subjectEl?.textContent?.trim() ?? ''
+
+  const bodyEls = document.querySelectorAll<HTMLElement>('.a3s.aiL, div[data-message-id] .a3s')
+  const body = Array.from(bodyEls)
+    .map(el => el.innerText?.trim())
+    .filter(Boolean)
+    .join('\n\n')
+
+  const senderEl = document.querySelector<HTMLElement>('.gD[email], span[email]')
+  const sender = senderEl?.getAttribute('email') ?? ''
+
+  if (!body) return null
+  return { emailId, subject, body, sender }
+}
