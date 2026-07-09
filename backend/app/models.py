@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -26,6 +28,22 @@ SUPPORTED_LANGUAGES: dict[str, str] = {
     "Portuguese": "pt",
     "Japanese": "ja",
 }
+
+
+TONE_VARIANTS = ("formal", "friendly", "concise", "persuasive", "executive", "professional")
+ToneVariant = Literal["formal", "friendly", "concise", "persuasive", "executive", "professional"]
+
+
+class ToneRewriteRequest(BaseModel):
+    text: str = Field(min_length=1)
+    tone: ToneVariant
+
+
+class ToneRewriteResponse(BaseModel):
+    rewritten: str
+    tone: str
+    changes_summary: str
+    truncated: bool = False  # True when input exceeded 2 000 chars and was clipped
 
 
 class Correction(BaseModel):
