@@ -40,12 +40,15 @@ async def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
+    raw_sentiment = data.get("sentiment", "neutral")
+    raw_tone      = data.get("tone", "formal")
+
     return AnalyzeResponse(
         email_id=req.email_id,
         summary=data.get("summary", ""),
         action_items=data.get("action_items") or [],
         quick_replies=data.get("quick_replies") or [],
-        sentiment=data.get("sentiment", "neutral"),
-        tone=data.get("tone", "formal"),
+        sentiment=raw_sentiment if raw_sentiment in _VALID_SENTIMENTS else "neutral",
+        tone=raw_tone if raw_tone in _VALID_TONES else "formal",
         grammar_issues=data.get("grammar_issues") or [],
     )
