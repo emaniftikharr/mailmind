@@ -70,3 +70,13 @@ class TranslateResponse(BaseModel):
     translated_text: str
     source_language: str
     target_language: str
+
+
+class SummarizeRequest(BaseModel):
+    text: str
+
+
+class SummarizeResponse(BaseModel):
+    bullets: list[str]
+    word_count: int
+    was_summarized: bool
