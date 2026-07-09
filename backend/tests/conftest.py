@@ -49,6 +49,15 @@ async def _fake_check_grammar(text: str) -> dict:
     return _GRAMMAR_DATA
 
 
+async def _fake_rewrite_tone(text: str, tone: str) -> dict:
+    truncated = len(text) > 2_000
+    return {
+        "rewritten": f"[{tone.upper()}] {text[:120]}",
+        "changes_summary": f"Rewrote the email in a {tone} tone.",
+        "truncated": truncated,
+    }
+
+
 @pytest.fixture(autouse=True)
 def mock_openai():
     mock_client = MagicMock()
@@ -56,6 +65,7 @@ def mock_openai():
     with (
         patch("app.routers.analyze.get_client", return_value=mock_client),
         patch("app.routers.grammar.check_grammar", side_effect=_fake_check_grammar),
+        patch("app.routers.tone.rewrite_tone", side_effect=_fake_rewrite_tone),
     ):
         yield
 
