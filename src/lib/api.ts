@@ -44,3 +44,17 @@ export const analyzeEmail = (req: AnalyzeRequest) =>
 
 export const translateText = (text: string, targetLanguage: SupportedLanguage) =>
   post<TranslateResponse>('/api/v1/translate', { text, target_language: targetLanguage })
+
+export interface Correction {
+  original: string
+  corrected: string
+  explanation: string
+}
+
+export interface GrammarResponse {
+  corrected_text: string
+  corrections: Correction[]
+}
+
+export const checkGrammar = (text: string) =>
+  post<GrammarResponse>('/api/v1/grammar', { text })
