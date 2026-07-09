@@ -7,6 +7,9 @@ from app.openai_client import get_client
 
 router = APIRouter(tags=["analyze"])
 
+_VALID_SENTIMENTS = frozenset({"positive", "neutral", "negative"})
+_VALID_TONES      = frozenset({"formal", "informal", "urgent", "friendly"})
+
 _SYSTEM = (
     "You are an email analysis assistant. Analyze the provided email and respond "
     "with a JSON object containing exactly these fields:\n"
