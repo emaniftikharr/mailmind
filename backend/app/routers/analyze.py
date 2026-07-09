@@ -44,5 +44,5 @@ async def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
         quick_replies=data.get("quick_replies") or [],
         sentiment=data.get("sentiment", "neutral"),
         tone=data.get("tone", "formal"),
-        grammar_issues=data.get("grammar_issues", []),
+        grammar_issues=data.get("grammar_issues") or [],
     )
