@@ -49,6 +49,23 @@ async def _fake_check_grammar(text: str) -> dict:
     return _GRAMMAR_DATA
 
 
+async def _fake_summarize_email(text: str) -> dict:
+    from app.summary_agent import LONG_EMAIL_THRESHOLD_WORDS
+
+    word_count = len(text.split())
+    if word_count < LONG_EMAIL_THRESHOLD_WORDS:
+        return {"bullets": [], "word_count": word_count, "was_summarized": False}
+    return {
+        "bullets": [
+            "The team will meet on Thursday to review Q3 roadmap priorities.",
+            "All department leads must submit budgets by end of Friday.",
+            "The product launch is scheduled for October 15th.",
+        ],
+        "word_count": word_count,
+        "was_summarized": True,
+    }
+
+
 async def _fake_translate_text(text: str, target_language: str) -> dict:
     return {
         "translated_text": f"[{target_language.upper()}] {text[:80]}",
@@ -74,6 +91,7 @@ def mock_openai():
         patch("app.routers.grammar.check_grammar", side_effect=_fake_check_grammar),
         patch("app.routers.tone.rewrite_tone", side_effect=_fake_rewrite_tone),
         patch("app.routers.translate.translate_text", side_effect=_fake_translate_text),
+        patch("app.routers.summarize.summarize_email", side_effect=_fake_summarize_email),
     ):
         yield
 
