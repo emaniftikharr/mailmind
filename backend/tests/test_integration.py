@@ -278,3 +278,114 @@ def test_summarize_short_personas_not_summarized(client, persona):
     data = client.post("/api/v1/summarize", json={"text": persona["body"]}).json()
     assert data["was_summarized"] is False
     assert data["bullets"] == []
+
+
+# ── Pipeline: feature combinations ────────────────────────────────────────────
+
+def test_pipeline_analyze_and_grammar_both_succeed(client):
+    analyze_data = client.post("/api/v1/analyze", json=_INTL).json()
+    grammar_data = client.post("/api/v1/grammar", json={"text": _INTL["body"]}).json()
+    assert analyze_data["email_id"] == _INTL["email_id"]
+    assert isinstance(grammar_data["corrected_text"], str)
+
+
+def test_pipeline_analyze_and_tone_both_succeed(client):
+    analyze_data = client.post("/api/v1/analyze", json=_CORPORATE).json()
+    tone_data = client.post("/api/v1/rewrite-tone",
+                            json={"text": _CORPORATE["body"], "tone": "executive"}).json()
+    assert "summary" in analyze_data
+    assert isinstance(tone_data["rewritten"], str) and tone_data["rewritten"]
+
+
+def test_pipeline_analyze_and_summarize_long_email(client):
+    analyze_data = client.post("/api/v1/analyze", json=_CORPORATE).json()
+    summarize_data = client.post("/api/v1/summarize",
+                                 json={"text": _CORPORATE["body"]}).json()
+    assert "summary" in analyze_data
+    assert summarize_data["was_summarized"] is True
+    assert len(summarize_data["bullets"]) >= 3
+
+
+def test_pipeline_grammar_and_translate(client):
+    grammar_data = client.post("/api/v1/grammar", json={"text": _INTL["body"]}).json()
+    corrected = grammar_data["corrected_text"]
+    translate_data = client.post("/api/v1/translate",
+                                 json={"text": corrected, "target_language": "French"}).json()
+    assert translate_data["target_language"] == "French"
+    assert isinstance(translate_data["translated_text"], str)
+
+
+# ── Regression: empty text rejected with 422 ──────────────────────────────────
+
+def test_grammar_empty_text_returns_422(client):
+    assert client.post("/api/v1/grammar", json={"text": ""}).status_code == 422
+
+
+def test_tone_empty_text_returns_422(client):
+    assert client.post("/api/v1/rewrite-tone",
+                       json={"text": "", "tone": "formal"}).status_code == 422
+
+
+def test_translate_empty_text_returns_422(client):
+    assert client.post("/api/v1/translate",
+                       json={"text": "", "target_language": "Spanish"}).status_code == 422
+
+
+# ── Regression: null list fields and enum normalization ───────────────────────
+
+def test_analyze_response_lists_never_null(client):
+    data = client.post("/api/v1/analyze", json=_STARTUP).json()
+    assert data["action_items"] is not None
+    assert data["quick_replies"] is not None
+    assert data["grammar_issues"] is not None
+
+
+def test_analyze_sentiment_always_valid_enum(client):
+    assert client.post("/api/v1/analyze", json=_MINIMAL).json()["sentiment"] in VALID_SENTIMENTS
+
+
+def test_analyze_tone_always_valid_enum(client):
+    assert client.post("/api/v1/analyze", json=_MINIMAL).json()["tone"] in VALID_TONES_ANALYZE
+
+
+# ── Edge cases: special characters ────────────────────────────────────────────
+
+def test_analyze_subject_with_emoji(client):
+    payload = {**_STARTUP, "email_id": "emoji-001", "subject": "🚀 Ship it?"}
+    assert client.post("/api/v1/analyze", json=payload).status_code == 200
+
+
+def test_analyze_body_with_html_entities(client):
+    payload = {
+        "email_id": "html-001",
+        "subject": "Re: Q&A",
+        "sender": "test@example.com",
+        "body": "Hi &amp; thanks. &lt;3 the new feature. Let&#39;s talk.",
+    }
+    assert client.post("/api/v1/analyze", json=payload).status_code == 200
+
+
+def test_grammar_body_with_unicode(client):
+    text = "I visited Zürich and São Paulo — it was très magnifique!"
+    data = client.post("/api/v1/grammar", json={"text": text}).json()
+    assert isinstance(data["corrected_text"], str)
+
+
+def test_summarize_text_at_exactly_threshold(client):
+    text = " ".join(["word"] * LONG_EMAIL_THRESHOLD_WORDS)
+    assert client.post("/api/v1/summarize", json={"text": text}).json()["was_summarized"] is True
+
+
+def test_summarize_text_one_below_threshold(client):
+    text = " ".join(["word"] * (LONG_EMAIL_THRESHOLD_WORDS - 1))
+    assert client.post("/api/v1/summarize", json={"text": text}).json()["was_summarized"] is False
+
+
+# ── Validation completeness ───────────────────────────────────────────────────
+
+def test_all_endpoints_reject_missing_required_fields(client):
+    assert client.post("/api/v1/analyze",      json={}).status_code == 422
+    assert client.post("/api/v1/grammar",      json={}).status_code == 422
+    assert client.post("/api/v1/rewrite-tone", json={}).status_code == 422
+    assert client.post("/api/v1/translate",    json={}).status_code == 422
+    assert client.post("/api/v1/summarize",    json={}).status_code == 422
