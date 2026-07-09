@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AnalyzeRequest(BaseModel):
@@ -26,6 +26,21 @@ SUPPORTED_LANGUAGES: dict[str, str] = {
     "Portuguese": "pt",
     "Japanese": "ja",
 }
+
+
+class Correction(BaseModel):
+    original: str
+    corrected: str
+    explanation: str
+
+
+class GrammarRequest(BaseModel):
+    text: str = Field(min_length=1)
+
+
+class GrammarResponse(BaseModel):
+    corrected_text: str
+    corrections: list[Correction]
 
 
 class TranslateRequest(BaseModel):
