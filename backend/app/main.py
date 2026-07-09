@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import analyze, grammar, health, tone, translate
+from app.routers import analyze, grammar, health, summarize, tone, translate
 
 load_dotenv()
 
@@ -36,5 +36,6 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(analyze.router, prefix="/api/v1")
 app.include_router(grammar.router, prefix="/api/v1")
+app.include_router(summarize.router, prefix="/api/v1")
 app.include_router(tone.router, prefix="/api/v1")
 app.include_router(translate.router, prefix="/api/v1")
