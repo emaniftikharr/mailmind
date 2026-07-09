@@ -70,3 +70,18 @@ export interface ToneRewriteResponse {
 
 export const rewriteTone = (text: string, tone: ToneVariant) =>
   post<ToneRewriteResponse>('/api/v1/rewrite-tone', { text, tone })
+
+export const SUMMARY_WORD_THRESHOLD = 300
+
+export function countWords(text: string): number {
+  return text.trim() === '' ? 0 : text.trim().split(/\s+/).length
+}
+
+export interface SummarizeResponse {
+  bullets: string[]
+  word_count: number
+  was_summarized: boolean
+}
+
+export const summarizeEmail = (text: string) =>
+  post<SummarizeResponse>('/api/v1/summarize', { text })
