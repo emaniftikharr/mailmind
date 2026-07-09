@@ -49,6 +49,13 @@ async def _fake_check_grammar(text: str) -> dict:
     return _GRAMMAR_DATA
 
 
+async def _fake_translate_text(text: str, target_language: str) -> dict:
+    return {
+        "translated_text": f"[{target_language.upper()}] {text[:80]}",
+        "source_language": "English",
+    }
+
+
 async def _fake_rewrite_tone(text: str, tone: str) -> dict:
     truncated = len(text) > 2_000
     return {
@@ -66,6 +73,7 @@ def mock_openai():
         patch("app.routers.analyze.get_client", return_value=mock_client),
         patch("app.routers.grammar.check_grammar", side_effect=_fake_check_grammar),
         patch("app.routers.tone.rewrite_tone", side_effect=_fake_rewrite_tone),
+        patch("app.routers.translate.translate_text", side_effect=_fake_translate_text),
     ):
         yield
 
