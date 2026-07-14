@@ -1,17 +1,5 @@
-import json
-
+from app.chains.tone_chain import MAX_INPUT_CHARS, SHORT_THRESHOLD, get_tone_chain
 from app.models import ToneVariant
-from app.openai_client import get_client
-
-_MAX_INPUT_CHARS = 2_000   # clip long emails to avoid blowing the output budget
-_SHORT_THRESHOLD = 100     # emails shorter than this need special handling
-
-_SYSTEM = (
-    "You are an expert email writer. Rewrite the given email in the requested tone. "
-    "Return a JSON object with:\n"
-    "- rewritten: the full rewritten email text\n"
-    "- changes_summary: one sentence describing the key changes made"
-)
 
 _TONE_INSTRUCTIONS: dict[ToneVariant, str] = {
     "formal": (
@@ -54,7 +42,6 @@ _TONE_INSTRUCTIONS: dict[ToneVariant, str] = {
     ),
 }
 
-# Appended to the instruction for very short emails to prevent padding
 _SHORT_ADDENDUM = (
     " IMPORTANT: this email is very short — do not add content that was not implied "
     "by the original. Preserve its brevity."
@@ -62,26 +49,16 @@ _SHORT_ADDENDUM = (
 
 
 async def rewrite_tone(text: str, tone: ToneVariant) -> dict:
-    truncated = len(text) > _MAX_INPUT_CHARS
-    working_text = text[:_MAX_INPUT_CHARS] if truncated else text
+    truncated = len(text) > MAX_INPUT_CHARS
+    working_text = text[:MAX_INPUT_CHARS] if truncated else text
 
     instruction = _TONE_INSTRUCTIONS[tone]
-    if len(working_text.strip()) < _SHORT_THRESHOLD:
+    if len(working_text.strip()) < SHORT_THRESHOLD:
         instruction += _SHORT_ADDENDUM
 
-    # Long emails need more output tokens; short ones need fewer
-    max_tokens = 1_500 if len(working_text) > 1_000 else 768
-
-    resp = await get_client().chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": f"Tone: {tone}\nInstruction: {instruction}\n\nEmail:\n{working_text}"},
-        ],
-        max_tokens=max_tokens,
-        temperature=0.4,
+    use_long_chain = len(working_text) > 1_000
+    data: dict = await get_tone_chain(long=use_long_chain).ainvoke(
+        {"tone": tone, "instruction": instruction, "email_text": working_text}
     )
-    data = json.loads(resp.choices[0].message.content)
     data["truncated"] = truncated
     return data
