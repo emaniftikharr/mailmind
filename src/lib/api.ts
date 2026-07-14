@@ -238,3 +238,35 @@ export interface PipelineResponse {
 
 export const runPipeline = (req: PipelineRequest) =>
   post<PipelineResponse>('/api/v1/pipeline', req)
+
+// ── Flowchart ────────────────────────────────────────────────────────────────
+
+export type FlowchartNodeType = 'start' | 'end' | 'step' | 'decision'
+export type FlowchartType = 'sequential' | 'branching' | 'parallel'
+
+export interface FlowchartNode {
+  id: string
+  label: string
+  type: FlowchartNodeType
+  description: string
+}
+
+/** source/target instead of from/to — maps directly to React Flow Edge */
+export interface FlowchartEdge {
+  source: string
+  target: string
+  label: string
+}
+
+export interface FlowchartResponse {
+  has_flowchart: boolean
+  title: string
+  flowchart_type: FlowchartType | null
+  nodes: FlowchartNode[]
+  edges: FlowchartEdge[]
+  /** Ready-to-render Mermaid flowchart definition */
+  mermaid: string
+}
+
+export const detectFlowchart = (subject: string, body: string) =>
+  post<FlowchartResponse>('/api/v1/flowchart', { subject, body })
