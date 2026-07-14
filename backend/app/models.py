@@ -232,6 +232,37 @@ class ActionResponse(BaseModel):
     has_tasks: bool
 
 
+FlowchartNodeType = Literal["start", "end", "step", "decision"]
+FlowchartType = Literal["sequential", "branching", "parallel"]
+
+
+class FlowchartNode(BaseModel):
+    id: str
+    label: str
+    type: FlowchartNodeType
+    description: str = ""
+
+
+class FlowchartEdge(BaseModel):
+    source: str
+    target: str
+    label: str = ""
+
+
+class FlowchartRequest(BaseModel):
+    subject: str = Field(default="")
+    body: str = Field(min_length=1)
+
+
+class FlowchartResponse(BaseModel):
+    has_flowchart: bool
+    title: str = ""
+    flowchart_type: FlowchartType | None = None
+    nodes: list[FlowchartNode] = []
+    edges: list[FlowchartEdge] = []
+    mermaid: str = ""
+
+
 class PipelineRequest(BaseModel):
     subject: str = Field(default="")
     body: str = Field(min_length=1)
