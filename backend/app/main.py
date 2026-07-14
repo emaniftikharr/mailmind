@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import actions, analyze, classify, grammar, health, links, phishing, pipeline, replies, summarize, tone, translate, trust
+from app.routers import actions, analyze, classify, flowchart, grammar, health, links, phishing, pipeline, replies, summarize, tone, translate, trust
 
 load_dotenv()
 
@@ -46,3 +46,4 @@ app.include_router(trust.router, prefix="/api/v1")
 app.include_router(actions.router, prefix="/api/v1")
 app.include_router(replies.router, prefix="/api/v1")
 app.include_router(pipeline.router, prefix="/api/v1")
+app.include_router(flowchart.router, prefix="/api/v1")
