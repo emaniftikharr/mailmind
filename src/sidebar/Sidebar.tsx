@@ -5,11 +5,21 @@ import {
   SUMMARY_WORD_THRESHOLD,
   type SupportedLanguage,
   type AnalyzeResponse,
+  type ClassifyResponse,
   type GrammarResponse,
   type SummarizeResponse,
   type ToneVariant,
   type ToneRewriteResponse,
+  type TrustResponse,
+  type RiskLevel,
+  type ActionResponse,
+  type TaskModel,
+  type ReplyResponse,
   analyzeEmail,
+  classifyEmail,
+  checkTrust,
+  extractActions,
+  generateReplies,
   countWords,
   summarizeEmail,
   translateText,
@@ -18,6 +28,7 @@ import {
 } from '../lib/api'
 import { usePrivacyMode, type PrivacyMode } from '../lib/usePrivacyMode'
 import type { EmailData } from '../content/gmail'
+import { insertIntoCompose, type InsertResult } from '../content/compose'
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 const C = {
@@ -53,6 +64,10 @@ const INJECTED_STYLES = `
   from { opacity: 0; transform: translateY(4px) }
   to   { opacity: 1; transform: translateY(0)   }
 }
+@keyframes mm-pulse {
+  0%, 100% { opacity: 1 }
+  50%       { opacity: .3 }
+}
 .mm-skeleton {
   background: linear-gradient(90deg, #f0f0f0 0%, #e8e8e8 50%, #f0f0f0 100%);
   background-size: 200% 100%;
@@ -62,6 +77,7 @@ const INJECTED_STYLES = `
 .mm-fade-in { animation: mm-fade-in .18s ease forwards; }
 .mm-tab:hover { background: #1d4ed8 !important; }
 .mm-close:hover { opacity: 1 !important; background: rgba(255,255,255,.15) !important; border-radius: 4px; }
+.mm-urgent-pulse { animation: mm-pulse 1s ease-in-out infinite; }
 `
 
 // Sidebar width: 22% of viewport, clamped 300–400 px
@@ -89,6 +105,743 @@ function useSidebarWidth() {
   return w
 }
 
+// ── Trust banner ─────────────────────────────────────────────────────────────
+
+const URGENCY_LABELS: Record<string, string> = {
+  account_threat:   'Account-closure threat',
+  security_alarm:   'Fake security alert',
+  time_pressure:    'Artificial deadline',
+  loss_aversion:    'Loss-aversion tactic',
+  authority_threat: 'Legal/authority threat',
+}
+
+const CRED_LABELS: Record<string, string> = {
+  password:     'Password request',
+  pin:          'PIN/code request',
+  ssn:          'SSN / national ID',
+  bank_account: 'Bank account details',
+  card_details: 'Card details (CVV, expiry)',
+  identity:     'Identity documents',
+}
+
+const LINK_LABELS: Record<string, string> = {
+  shortened_url:      'Shortened URL',
+  domain_mismatch:    'Domain mismatch',
+  brand_mismatch:     'Brand spoofing',
+  raw_ip_address:     'Raw IP address',
+  redirect_parameter: 'Open redirect',
+}
+
+const RISK_PALETTE: Record<RiskLevel, { color: string; bg: string; border: string; headerBg: string; barFill: string }> = {
+  critical: { color: '#991b1b', bg: '#fef2f2', border: '#fca5a5', headerBg: '#fee2e2', barFill: '#dc2626' },
+  high:     { color: '#92400e', bg: '#fffbeb', border: '#fcd34d', headerBg: '#fef3c7', barFill: '#d97706' },
+  moderate: { color: '#713f12', bg: '#fefce8', border: '#fde68a', headerBg: '#fef9c3', barFill: '#ca8a04' },
+  low:      { color: '#166534', bg: '#f0fdf4', border: '#bbf7d0', headerBg: '#dcfce7', barFill: '#16a34a' },
+}
+
+function TrustBanner({ trust }: { trust: TrustResponse | null }) {
+  const [expanded, setExpanded] = useState(false)
+  const [reported, setReported] = useState(false)
+
+  if (!trust || trust.risk_level === 'low') return null
+
+  const pal   = RISK_PALETTE[trust.risk_level]
+  const score = trust.trust_score
+  const isCriticalOrHigh = trust.risk_level === 'critical' || trust.risk_level === 'high'
+
+  const riskLabel: Record<RiskLevel, string> = {
+    critical: 'Critical Risk',
+    high:     'High Risk',
+    moderate: 'Moderate Risk',
+    low:      'Low Risk',
+  }
+
+  const hasDetails =
+    trust.urgency_categories.length > 0 ||
+    trust.credential_categories.length > 0 ||
+    trust.link_flags.length > 0
+
+  function handleReport() {
+    if (reported) return
+    console.log('[MailMind] Phishing report submitted (placeholder)', trust)
+    setReported(true)
+    setTimeout(() => setReported(false), 3000)
+  }
+
+  return (
+    <div
+      className="mm-fade-in"
+      style={{
+        background: pal.bg,
+        border: `1px solid ${pal.border}`,
+        borderRadius: 10,
+        overflow: 'hidden',
+        boxShadow: '0 1px 3px rgba(0,0,0,.07)',
+      }}
+    >
+      {/* ── Header ── */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '8px 12px',
+        background: pal.headerBg,
+        borderBottom: `1px solid ${pal.border}`,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 13 }}>⚠</span>
+          <span style={{ fontSize: 11, fontWeight: 700, color: pal.color, letterSpacing: '.02em' }}>
+            {riskLabel[trust.risk_level]}
+          </span>
+        </div>
+        {/* Score badge */}
+        <span style={{
+          fontSize: 11, fontWeight: 700,
+          padding: '1px 7px', borderRadius: 9999,
+          background: pal.barFill, color: '#fff',
+        }}>
+          {score}/100
+        </span>
+      </div>
+
+      {/* ── Body ── */}
+      <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 9 }}>
+
+        {/* Trust score bar */}
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+            <span style={{ fontSize: 9, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.08em', color: pal.color }}>
+              Trust score
+            </span>
+            <span style={{ fontSize: 9, color: pal.color, fontWeight: 600 }}>
+              {score < 40 ? 'Very low — exercise caution' : score < 60 ? 'Low — verify before acting' : 'Moderate — double-check sender'}
+            </span>
+          </div>
+          <div style={{
+            height: 5, borderRadius: 9999,
+            background: `${pal.barFill}22`,
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              height: '100%', borderRadius: 9999,
+              width: `${score}%`,
+              background: pal.barFill,
+              transition: 'width .5s ease',
+            }} />
+          </div>
+        </div>
+
+        {/* Summary reason */}
+        <p style={{
+          fontSize: 11, color: pal.color, margin: 0,
+          lineHeight: 1.5,
+        }}>
+          {trust.summary.replace(/^Trust score \d+\/100 \([^)]+\)\.\s*/, '')}
+        </p>
+
+        {/* Expandable indicators */}
+        {hasDetails && (
+          <div>
+            <button
+              onClick={() => setExpanded(v => !v)}
+              style={{
+                background: 'none', border: 'none', padding: 0,
+                fontSize: 11, fontWeight: 600, color: pal.color,
+                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
+              }}
+            >
+              <span style={{
+                display: 'inline-block',
+                transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                transition: 'transform .15s',
+                fontSize: 9,
+              }}>▶</span>
+              {expanded ? 'Hide details' : 'Why flagged'}
+            </button>
+
+            {expanded && (
+              <div className="mm-fade-in" style={{
+                marginTop: 7,
+                display: 'flex', flexDirection: 'column', gap: 6,
+                paddingLeft: 2,
+              }}>
+                {trust.urgency_categories.length > 0 && (
+                  <IndicatorGroup
+                    label="Urgency tactics"
+                    items={trust.urgency_categories.map(c => URGENCY_LABELS[c] ?? c)}
+                    color={pal.color}
+                    border={pal.border}
+                  />
+                )}
+                {trust.credential_categories.length > 0 && (
+                  <IndicatorGroup
+                    label="Sensitive data requested"
+                    items={trust.credential_categories.map(c => CRED_LABELS[c] ?? c)}
+                    color={pal.color}
+                    border={pal.border}
+                  />
+                )}
+                {trust.link_flags.length > 0 && (
+                  <IndicatorGroup
+                    label="Suspicious links"
+                    items={trust.link_flags.map(f => LINK_LABELS[f] ?? f)}
+                    color={pal.color}
+                    border={pal.border}
+                  />
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Report phishing button — only for high/critical */}
+        {isCriticalOrHigh && (
+          <button
+            onClick={handleReport}
+            disabled={reported}
+            style={{
+              width: '100%', fontSize: 11, fontWeight: 600,
+              padding: '6px 0', borderRadius: 6,
+              background: reported ? pal.headerBg : 'transparent',
+              color: reported ? pal.color : pal.color,
+              border: `1px solid ${pal.border}`,
+              cursor: reported ? 'default' : 'pointer',
+              transition: 'all .15s',
+              letterSpacing: '.02em',
+            }}
+          >
+            {reported ? '✓ Phishing reported' : '🚨 Report phishing'}
+          </button>
+        )}
+
+      </div>
+    </div>
+  )
+}
+
+function IndicatorGroup({ label, items, color, border }: {
+  label: string; items: string[]; color: string; border: string
+}) {
+  return (
+    <div>
+      <p style={{
+        fontSize: 9, fontWeight: 700, textTransform: 'uppercase',
+        letterSpacing: '.08em', color, margin: '0 0 4px',
+      }}>
+        {label}
+      </p>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+        {items.map(item => (
+          <span key={item} style={{
+            fontSize: 10, padding: '2px 7px', borderRadius: 9999,
+            background: `${color}14`,
+            border: `1px solid ${border}`,
+            color,
+          }}>
+            {item}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Suggested action buttons ──────────────────────────────────────────────────
+
+const URGENCY_ORDER = ['today', 'tomorrow', 'this_week', 'asap', 'next_week', 'this_month', 'future', 'overdue']
+
+const ACTION_META = {
+  calendar: { icon: '📅', label: 'Add to calendar', color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe' },
+  reminder: { icon: '⏰', label: 'Add reminder',    color: '#d97706', bg: '#fffbeb', border: '#fcd34d' },
+  task:     { icon: '✓',  label: 'Create task',     color: '#15803d', bg: '#f0fdf4', border: '#bbf7d0' },
+} as const
+
+function SuggestedActionRow({
+  kind, subtitle, phase3Payload,
+}: {
+  kind: keyof typeof ACTION_META
+  subtitle: string
+  phase3Payload: unknown
+}) {
+  const [done, setDone] = useState(false)
+  const meta = ACTION_META[kind]
+
+  function handleClick() {
+    if (done) return
+    // Phase 3: replace this log with the real API call
+    console.log('[MailMind][Phase3]', { type: kind, payload: phase3Payload })
+    setDone(true)
+    setTimeout(() => setDone(false), 2500)
+  }
+
+  return (
+    <button
+      onClick={handleClick}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        width: '100%', textAlign: 'left',
+        padding: '8px 10px', borderRadius: 8,
+        background: done ? meta.bg : C.surface,
+        border: `1px solid ${done ? meta.border : C.border}`,
+        cursor: 'pointer',
+        transition: 'all .18s',
+        boxShadow: '0 1px 2px rgba(0,0,0,.04)',
+      }}
+    >
+      {/* Icon circle */}
+      <span style={{
+        flexShrink: 0,
+        width: 28, height: 28, borderRadius: '50%',
+        background: done ? meta.bg : `${meta.color}14`,
+        border: `1px solid ${meta.border}`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 13,
+        transition: 'background .18s',
+      }}>
+        {done ? '✓' : meta.icon}
+      </span>
+
+      {/* Text */}
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{
+          display: 'block', fontSize: 12, fontWeight: 600,
+          color: done ? meta.color : C.textSecondary,
+        }}>
+          {done ? 'Added — Phase 3 coming' : meta.label}
+        </span>
+        {!done && subtitle && (
+          <span style={{
+            display: 'block', fontSize: 10, color: C.textMuted,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            marginTop: 1,
+          }}>
+            {subtitle}
+          </span>
+        )}
+      </span>
+
+      {/* Chevron */}
+      {!done && (
+        <span style={{ fontSize: 10, color: C.textMuted, flexShrink: 0 }}>›</span>
+      )}
+    </button>
+  )
+}
+
+function SuggestedActions({ actions }: { actions: ActionResponse | null }) {
+  if (!actions) return null
+  const myTasks = actions.tasks.filter((t: TaskModel) => t.assignee === 'me')
+  const hasAnything = actions.has_meeting || actions.has_deadlines || myTasks.length > 0
+  if (!hasAnything) return null
+
+  // Sort deadlines by urgency and pick the most pressing
+  const sortedDeadlines = [...actions.deadlines].sort(
+    (a, b) => URGENCY_ORDER.indexOf(a.urgency) - URGENCY_ORDER.indexOf(b.urgency)
+  )
+  const topDeadline = sortedDeadlines[0]
+  const extraDeadlines = sortedDeadlines.length - 1
+
+  return (
+    <div className="mm-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+      <p style={{
+        fontSize: 9, fontWeight: 700, textTransform: 'uppercase',
+        letterSpacing: '.1em', color: C.textMuted, margin: 0,
+      }}>
+        Suggested Actions
+      </p>
+
+      {/* Calendar event */}
+      {actions.has_meeting && (
+        <SuggestedActionRow
+          kind="calendar"
+          subtitle={[
+            actions.meeting.title,
+            [actions.meeting.date_str, actions.meeting.time_str].filter(Boolean).join(' · '),
+          ].filter(Boolean).join(' — ')}
+          phase3Payload={{
+            title:     actions.meeting.title,
+            date_str:  actions.meeting.date_str,
+            time_str:  actions.meeting.time_str,
+            location:  actions.meeting.location,
+            attendees: actions.meeting.attendees,
+            agenda:    actions.meeting.agenda,
+            duration:  actions.meeting.duration_minutes,
+          }}
+        />
+      )}
+
+      {/* Reminder for most urgent deadline */}
+      {actions.has_deadlines && topDeadline && (
+        <SuggestedActionRow
+          kind="reminder"
+          subtitle={[
+            topDeadline.phrase,
+            topDeadline.resolved_date ?? topDeadline.urgency,
+            extraDeadlines > 0 ? `+${extraDeadlines} more` : '',
+          ].filter(Boolean).join(' · ')}
+          phase3Payload={sortedDeadlines.map(d => ({
+            phrase:   d.phrase,
+            date:     d.resolved_date,
+            urgency:  d.urgency,
+          }))}
+        />
+      )}
+
+      {/* Tasks (my tasks only) */}
+      {myTasks.length > 0 && (
+        <SuggestedActionRow
+          kind="task"
+          subtitle={[
+            myTasks[0].title,
+            myTasks[0].due_date_str,
+            myTasks.length > 1 ? `+${myTasks.length - 1} more` : '',
+          ].filter(Boolean).join(' · ')}
+          phase3Payload={myTasks.map(t => ({
+            title:       t.title,
+            description: t.description,
+            due_date:    t.due_date_str,
+            priority:    t.priority,
+          }))}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── Smart replies ─────────────────────────────────────────────────────────────
+
+const TONE_PALETTE = {
+  formal:   { label: 'Formal',   color: '#1e40af', bg: '#eff6ff', border: '#bfdbfe' },
+  friendly: { label: 'Friendly', color: '#15803d', bg: '#f0fdf4', border: '#bbf7d0' },
+  direct:   { label: 'Direct',   color: '#92400e', bg: '#fffbeb', border: '#fde68a' },
+} as const
+
+type ActionStatus = 'idle' | InsertResult | 'copied'
+
+const STATUS_MESSAGE: Record<ActionStatus, string | null> = {
+  idle:       null,
+  success:    '✓ Inserted into compose',
+  copied:     '✓ Copied to clipboard',
+  no_compose: 'Open a reply compose window first',
+  error:      'Insert failed — try Copy instead',
+}
+const STATUS_COLOR: Record<ActionStatus, string> = {
+  idle:       'transparent',
+  success:    '#15803d',
+  copied:     '#15803d',
+  no_compose: '#92400e',
+  error:      '#dc2626',
+}
+
+function SmartReplies({ replies }: { replies: ReplyResponse | null }) {
+  const [activeIdx,   setActiveIdx]   = useState(0)
+  const [insertedIdx, setInsertedIdx] = useState<number | null>(null)
+  const [editing,     setEditing]     = useState(false)
+  const [editText,    setEditText]    = useState('')
+  const [status,      setStatus]      = useState<ActionStatus>('idle')
+
+  useEffect(() => {
+    setActiveIdx(0); setInsertedIdx(null)
+    setEditing(false); setEditText(''); setStatus('idle')
+  }, [replies])
+
+  if (!replies) return null
+
+  // Automated / no-reply emails: show a dismissal card instead of variants
+  if (!replies.reply_needed) {
+    return (
+      <div className="mm-fade-in" style={{
+        display: 'flex', alignItems: 'flex-start', gap: 9,
+        padding: '10px 12px',
+        background: '#f0fdf4', border: '1px solid #bbf7d0',
+        borderRadius: 10, boxShadow: '0 1px 2px rgba(0,0,0,.04)',
+      }}>
+        <span style={{
+          flexShrink: 0, width: 20, height: 20, borderRadius: '50%',
+          background: '#15803d', color: '#fff',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 11, fontWeight: 700,
+        }}>✓</span>
+        <div>
+          <p style={{ fontSize: 11, fontWeight: 600, color: '#15803d', margin: '0 0 2px' }}>
+            No reply needed
+          </p>
+          <p style={{ fontSize: 10, color: '#15803d', margin: 0, lineHeight: 1.4, opacity: .8 }}>
+            This appears to be an automated notification.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  if (replies.count === 0) return null
+
+  const variant = replies.variants[activeIdx]
+  const tone    = TONE_PALETTE[variant.tone as keyof typeof TONE_PALETTE]
+    ?? { label: variant.tone, color: C.textMuted, bg: C.bg, border: C.border }
+  const displayText = editing ? editText : variant.text
+
+  function switchTab(i: number) {
+    setActiveIdx(i); setEditing(false); setEditText(''); setStatus('idle')
+  }
+
+  function startEditing() {
+    setEditText(variant.text); setEditing(true); setStatus('idle')
+  }
+
+  function handleInsert() {
+    const result = insertIntoCompose(displayText)
+    if (result === 'success') { setInsertedIdx(activeIdx); setEditing(false) }
+    setStatus(result)
+    setTimeout(() => setStatus('idle'), result === 'success' ? 2500 : 3500)
+  }
+
+  function handleCopy() {
+    navigator.clipboard.writeText(displayText).then(() => {
+      setStatus('copied')
+      setTimeout(() => setStatus('idle'), 2000)
+    }).catch(() => {})
+  }
+
+  const statusMsg   = STATUS_MESSAGE[status]
+  const statusColor = STATUS_COLOR[status]
+
+  return (
+    <div className="mm-fade-in" style={{
+      background: C.surface, border: `1px solid ${C.border}`,
+      borderRadius: 10, overflow: 'hidden',
+      boxShadow: '0 1px 2px rgba(0,0,0,.04)',
+    }}>
+
+      {/* Section label */}
+      <p style={{
+        fontSize: 9, fontWeight: 700, textTransform: 'uppercase',
+        letterSpacing: '.1em', color: C.textMuted,
+        margin: 0, padding: '8px 12px 0',
+      }}>
+        Smart Replies
+      </p>
+
+      {/* Variant tab pills */}
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', padding: '6px 12px 0' }}>
+        {replies.variants.map((v, i) => {
+          const isIns = insertedIdx === i
+          const isAct = activeIdx === i
+          return (
+            <button key={i} onClick={() => switchTab(i)} style={{
+              fontSize: 10, fontWeight: 600, cursor: 'pointer',
+              padding: '3px 9px', borderRadius: 9999, transition: 'all .15s',
+              border: `1px solid ${isIns ? '#bbf7d0' : isAct ? C.brand : C.border}`,
+              background: isIns ? '#f0fdf4' : isAct ? C.brandBg : 'transparent',
+              color: isIns ? '#15803d' : isAct ? C.brand : C.textMuted,
+            }}>
+              {isIns ? `✓ ${v.label}` : v.label}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Tone badge */}
+      <div style={{ padding: '6px 12px 0' }}>
+        <span style={{
+          display: 'inline-block',
+          fontSize: 9, fontWeight: 700, letterSpacing: '.07em', textTransform: 'uppercase',
+          padding: '2px 8px', borderRadius: 9999,
+          background: tone.bg, border: `1px solid ${tone.border}`, color: tone.color,
+        }}>
+          {tone.label}
+        </span>
+      </div>
+
+      {/* Reply body — textarea when editing, pre-wrap div otherwise */}
+      <div style={{ padding: '6px 12px 0' }}>
+        {editing ? (
+          <textarea
+            value={editText}
+            onChange={e => setEditText(e.target.value)}
+            autoFocus
+            style={{
+              width: '100%', boxSizing: 'border-box',
+              fontSize: 11, color: C.textSecondary, lineHeight: 1.55,
+              background: C.bg, borderRadius: 6,
+              padding: '8px 10px',
+              border: `1px solid ${tone.border}`,
+              fontFamily: 'inherit',
+              resize: 'vertical', minHeight: 100, maxHeight: 220,
+              outline: 'none',
+            }}
+          />
+        ) : (
+          <div style={{
+            fontSize: 11, color: C.textSecondary, lineHeight: 1.55,
+            background: C.bg, borderRadius: 6,
+            padding: '8px 10px',
+            border: `1px solid ${insertedIdx === activeIdx ? tone.border : C.borderFaint}`,
+            whiteSpace: 'pre-wrap', maxHeight: 130, overflowY: 'auto',
+            fontFamily: 'inherit', transition: 'border-color .18s',
+          }}>
+            {variant.text}
+          </div>
+        )}
+      </div>
+
+      {/* Status message */}
+      {statusMsg && (
+        <p style={{
+          fontSize: 10, fontWeight: 500, textAlign: 'center',
+          color: statusColor, margin: '5px 12px 0', lineHeight: 1.4,
+        }}>
+          {statusMsg}
+        </p>
+      )}
+
+      {/* Action row: Insert | Edit/Done | Copy */}
+      <div style={{ display: 'flex', gap: 5, padding: '7px 12px 10px' }}>
+
+        <button onClick={handleInsert} style={{
+          flex: 1, fontSize: 11, fontWeight: 600, cursor: 'pointer',
+          padding: '6px 0', borderRadius: 7, transition: 'all .18s',
+          border: `1px solid ${tone.color}`,
+          background: tone.color, color: '#fff',
+        }}>
+          {editing ? 'Insert edited reply' : 'Insert into compose'}
+        </button>
+
+        <button
+          onClick={editing ? () => setEditing(false) : startEditing}
+          style={{
+            fontSize: 10, fontWeight: 600, flexShrink: 0, cursor: 'pointer',
+            padding: '6px 10px', borderRadius: 7, transition: 'all .18s',
+            border: `1px solid ${editing ? tone.border : C.border}`,
+            background: editing ? tone.bg : 'transparent',
+            color: editing ? tone.color : C.textMuted,
+          }}
+        >
+          {editing ? 'Done' : 'Edit'}
+        </button>
+
+        <button onClick={handleCopy} style={{
+          fontSize: 10, fontWeight: 600, flexShrink: 0, cursor: 'pointer',
+          padding: '6px 10px', borderRadius: 7, transition: 'all .18s',
+          border: `1px solid ${status === 'copied' ? '#bbf7d0' : C.border}`,
+          background: status === 'copied' ? '#f0fdf4' : 'transparent',
+          color: status === 'copied' ? '#15803d' : C.textMuted,
+        }}>
+          {status === 'copied' ? '✓' : 'Copy'}
+        </button>
+
+      </div>
+    </div>
+  )
+}
+
+// ── Classification badge metadata ─────────────────────────────────────────────
+
+const CATEGORY_META: Record<string, { label: string; icon: string; color: string; bg: string; border: string }> = {
+  meeting:   { label: 'Meeting',   icon: '📅', color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe' },
+  complaint: { label: 'Complaint', icon: '⚠',  color: '#dc2626', bg: '#fef2f2', border: '#fecaca' },
+  job:       { label: 'Job',       icon: '💼', color: '#7c3aed', bg: '#f5f3ff', border: '#ddd6fe' },
+  update:    { label: 'Update',    icon: '📋', color: '#475569', bg: '#f1f5f9', border: '#e2e8f0' },
+  invoice:   { label: 'Invoice',   icon: '💳', color: '#d97706', bg: '#fffbeb', border: '#fcd34d' },
+  support:   { label: 'Support',   icon: '🔧', color: '#b45309', bg: '#fef9c3', border: '#fde68a' },
+  social:    { label: 'Social',    icon: '💬', color: '#15803d', bg: '#f0fdf4', border: '#bbf7d0' },
+  spam:      { label: 'Spam',      icon: '🚫', color: '#6b7280', bg: '#f3f4f6', border: '#e5e7eb' },
+}
+
+const PRIORITY_META: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  urgent: { label: 'Urgent', color: '#dc2626', bg: '#fef2f2', border: '#fecaca' },
+  high:   { label: 'High',   color: '#d97706', bg: '#fffbeb', border: '#fcd34d' },
+  normal: { label: 'Normal', color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe' },
+  low:    { label: 'Low',    color: '#6b7280', bg: '#f3f4f6', border: '#e5e7eb' },
+}
+
+function ClassificationBadge({
+  classification, loading,
+}: {
+  classification: ClassifyResponse | null
+  loading: boolean
+}) {
+  if (!loading && !classification) return null
+
+  const cat = classification ? (CATEGORY_META[classification.category] ?? CATEGORY_META.update) : null
+  const pri = classification ? (PRIORITY_META[classification.priority] ?? PRIORITY_META.normal) : null
+
+  return (
+    <div style={{
+      background: C.surface, border: `1px solid ${C.border}`,
+      borderRadius: 10, padding: '10px 12px',
+      boxShadow: '0 1px 2px rgba(0,0,0,.04)',
+    }}>
+      <p style={{
+        fontSize: 10, fontWeight: 700,
+        textTransform: 'uppercase', letterSpacing: '.08em',
+        color: C.textMuted, margin: '0 0 8px',
+      }}>
+        Classification
+      </p>
+
+      {loading ? <Skeleton lines={1} /> : (
+        <div className="mm-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+
+          {/* "Detected: [Category] + [Priority] Priority" */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: C.textMuted, fontWeight: 500 }}>Detected:</span>
+
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              fontSize: 11, fontWeight: 600,
+              padding: '2px 8px', borderRadius: 9999,
+              background: cat!.bg, border: `1px solid ${cat!.border}`, color: cat!.color,
+            }}>
+              <span>{cat!.icon}</span>
+              {cat!.label}
+            </span>
+
+            <span style={{ fontSize: 11, color: C.textMuted }}>+</span>
+
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              fontSize: 11, fontWeight: 600,
+              padding: '2px 8px', borderRadius: 9999,
+              background: pri!.bg, border: `1px solid ${pri!.border}`, color: pri!.color,
+            }}>
+              <span
+                className={classification!.priority === 'urgent' ? 'mm-urgent-pulse' : undefined}
+                style={{
+                  width: 6, height: 6, borderRadius: '50%',
+                  background: pri!.color, display: 'inline-block', flexShrink: 0,
+                }}
+              />
+              {pri!.label} Priority
+            </span>
+          </div>
+
+          {/* Reason */}
+          <p style={{ fontSize: 11, color: C.textMuted, margin: 0, lineHeight: 1.45, fontStyle: 'italic' }}>
+            {classification!.reason}
+          </p>
+
+          {/* Confidence bar */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{
+              flex: 1, height: 3, borderRadius: 9999,
+              background: C.borderFaint, overflow: 'hidden',
+            }}>
+              <div style={{
+                height: '100%', borderRadius: 9999,
+                width: `${Math.round(classification!.confidence * 100)}%`,
+                background: cat!.color, transition: 'width .4s ease',
+              }} />
+            </div>
+            <span style={{ fontSize: 10, color: C.textMuted, whiteSpace: 'nowrap' }}>
+              {Math.round(classification!.confidence * 100)}% confident
+            </span>
+          </div>
+
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface SidebarProps {
   emailOpen: boolean
@@ -102,12 +855,17 @@ export function Sidebar({ emailOpen, emailData, onVisibilityChange }: SidebarPro
   const w = useSidebarWidth()
   const [privacyMode, setPrivacyMode] = usePrivacyMode()
 
-  const [open, setOpen]                 = useState(true)
-  const [analysis, setAnalysis]         = useState<AnalyzeResponse | null>(null)
-  const [analyzing, setAnalyzing]       = useState(false)
-  const [analyzeError, setAnalyzeError] = useState<string | null>(null)
-  const [summary, setSummary]           = useState<SummarizeResponse | null>(null)
-  const [summarizing, setSummarizing]   = useState(false)
+  const [open, setOpen]                       = useState(true)
+  const [analysis, setAnalysis]               = useState<AnalyzeResponse | null>(null)
+  const [analyzing, setAnalyzing]             = useState(false)
+  const [analyzeError, setAnalyzeError]       = useState<string | null>(null)
+  const [summary, setSummary]                 = useState<SummarizeResponse | null>(null)
+  const [summarizing, setSummarizing]         = useState(false)
+  const [classification, setClassification]   = useState<ClassifyResponse | null>(null)
+  const [classifying, setClassifying]         = useState(false)
+  const [trust, setTrust]                     = useState<TrustResponse | null>(null)
+  const [actions, setActions]                 = useState<ActionResponse | null>(null)
+  const [replies, setReplies]                 = useState<ReplyResponse | null>(null)
 
   // Cancel token shared by all analysis paths (auto + manual)
   const cancelRef = useRef<() => void>(() => {})
@@ -123,6 +881,25 @@ export function Sidebar({ emailOpen, emailData, onVisibilityChange }: SidebarPro
       .then(d  => { if (!cancelled) setAnalysis(d) })
       .catch(() => { if (!cancelled) setAnalyzeError('Could not analyze email. Is the backend running?') })
       .finally(() => { if (!cancelled) setAnalyzing(false) })
+
+    // Classification runs in parallel
+    setClassification(null); setClassifying(true)
+    classifyEmail(data.subject, data.body)
+      .then(d  => { if (!cancelled) setClassification(d) })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setClassifying(false) })
+
+    // Trust check runs in parallel (rule-based, fast)
+    setTrust(null)
+    checkTrust(data.subject, data.body)
+      .then(d  => { if (!cancelled) setTrust(d) })
+      .catch(() => {})
+
+    // Action extraction runs in parallel (meeting + tasks via LLM, deadlines rule-based)
+    setActions(null)
+    extractActions(data.subject, data.body, data.sender ?? '')
+      .then(d  => { if (!cancelled) setActions(d) })
+      .catch(() => {})
 
     // Bullet summary runs in parallel for long emails only
     setSummary(null)
@@ -140,6 +917,8 @@ export function Sidebar({ emailOpen, emailData, onVisibilityChange }: SidebarPro
     cancelRef.current()
     setAnalysis(null); setAnalyzeError(null); setAnalyzing(false)
     setSummary(null); setSummarizing(false)
+    setClassification(null); setClassifying(false)
+    setTrust(null); setActions(null); setReplies(null)
   }, [emailData?.emailId])
 
   // Auto-analyze in Smart mode; cleanup cancels on email change or mode leave
@@ -155,7 +934,19 @@ export function Sidebar({ emailOpen, emailData, onVisibilityChange }: SidebarPro
     cancelRef.current()
     setAnalysis(null); setAnalyzeError(null); setAnalyzing(false)
     setSummary(null); setSummarizing(false)
+    setClassification(null); setClassifying(false)
+    setTrust(null); setActions(null); setReplies(null)
   }, [privacyMode])
+
+  // Generate smart replies once classification is ready (provides category context)
+  useEffect(() => {
+    if (!classification || !emailData) return
+    let cancelled = false
+    generateReplies(emailData.subject, emailData.body, emailData.sender ?? '', classification.category, classification.priority)
+      .then(d => { if (!cancelled) setReplies(d) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [classification])
 
   // Manual trigger – uses the shared runner so it too can be cancelled
   function handleManualAnalyze() {
@@ -275,6 +1066,10 @@ export function Sidebar({ emailOpen, emailData, onVisibilityChange }: SidebarPro
                   <ManualAnalysisPrompt onAnalyze={handleManualAnalyze} loading={analyzing} />
                 ) : (
                   <>
+                    <TrustBanner trust={trust} />
+                    <ClassificationBadge classification={classification} loading={classifying} />
+                    <SmartReplies replies={replies} />
+                    <SuggestedActions actions={actions} />
                     {(summarizing || summary !== null) && (
                       <SummaryPanel summary={summary} loading={summarizing} body={emailData?.body ?? ''} />
                     )}
