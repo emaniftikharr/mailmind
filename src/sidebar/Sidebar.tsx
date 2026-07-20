@@ -1,3 +1,4 @@
+import mermaid from 'mermaid'
 import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import {
@@ -15,6 +16,7 @@ import {
   type ActionResponse,
   type TaskModel,
   type ReplyResponse,
+  type FlowchartResponse,
   analyzeEmail,
   classifyEmail,
   checkTrust,
@@ -25,7 +27,15 @@ import {
   translateText,
   checkGrammar,
   rewriteTone,
+  detectFlowchart,
 } from '../lib/api'
+
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'neutral',
+  fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
+  flowchart: { curve: 'basis', padding: 12 },
+})
 import { usePrivacyMode, type PrivacyMode } from '../lib/usePrivacyMode'
 import type { EmailData } from '../content/gmail'
 import { insertIntoCompose, type InsertResult } from '../content/compose'
@@ -866,6 +876,8 @@ export function Sidebar({ emailOpen, emailData, onVisibilityChange }: SidebarPro
   const [trust, setTrust]                     = useState<TrustResponse | null>(null)
   const [actions, setActions]                 = useState<ActionResponse | null>(null)
   const [replies, setReplies]                 = useState<ReplyResponse | null>(null)
+  const [flowchart, setFlowchart]             = useState<FlowchartResponse | null>(null)
+  const [flowcharting, setFlowcharting]       = useState(false)
 
   // Cancel token shared by all analysis paths (auto + manual)
   const cancelRef = useRef<() => void>(() => {})
@@ -910,6 +922,13 @@ export function Sidebar({ emailOpen, emailData, onVisibilityChange }: SidebarPro
         .catch(() => {})
         .finally(() => { if (!cancelled) setSummarizing(false) })
     }
+
+    // Flowchart extraction runs in parallel
+    setFlowchart(null); setFlowcharting(true)
+    detectFlowchart(data.subject, data.body)
+      .then(d  => { if (!cancelled) setFlowchart(d) })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setFlowcharting(false) })
   }
 
   // Cancel + reset when the open email changes
@@ -919,6 +938,7 @@ export function Sidebar({ emailOpen, emailData, onVisibilityChange }: SidebarPro
     setSummary(null); setSummarizing(false)
     setClassification(null); setClassifying(false)
     setTrust(null); setActions(null); setReplies(null)
+    setFlowchart(null); setFlowcharting(false)
   }, [emailData?.emailId])
 
   // Auto-analyze in Smart mode; cleanup cancels on email change or mode leave
@@ -936,6 +956,7 @@ export function Sidebar({ emailOpen, emailData, onVisibilityChange }: SidebarPro
     setSummary(null); setSummarizing(false)
     setClassification(null); setClassifying(false)
     setTrust(null); setActions(null); setReplies(null)
+    setFlowchart(null); setFlowcharting(false)
   }, [privacyMode])
 
   // Generate smart replies once classification is ready (provides category context)
@@ -1073,6 +1094,7 @@ export function Sidebar({ emailOpen, emailData, onVisibilityChange }: SidebarPro
                     {(summarizing || summary !== null) && (
                       <SummaryPanel summary={summary} loading={summarizing} body={emailData?.body ?? ''} />
                     )}
+                    <FlowchartPanel flowchart={flowchart} loading={flowcharting} />
                     <AnalysisPanels analysis={analysis} analyzing={analyzing} />
                   </>
                 )}
@@ -1268,6 +1290,157 @@ function SummaryPanel({
             >
               {body}
             </div>
+          )}
+        </div>
+      )}
+    </Panel>
+  )
+}
+
+// ── Flowchart panel ───────────────────────────────────────────────────────────
+const FLOWCHART_TYPE_LABEL: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  sequential: { label: 'Sequential', color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe' },
+  branching:  { label: 'Branching',  color: '#7c3aed', bg: '#f5f3ff', border: '#ddd6fe' },
+  parallel:   { label: 'Parallel',   color: '#15803d', bg: '#f0fdf4', border: '#bbf7d0' },
+}
+
+function FlowchartPanel({
+  flowchart, loading,
+}: {
+  flowchart: FlowchartResponse | null
+  loading: boolean
+}) {
+  const svgContainerRef = useRef<HTMLDivElement>(null)
+  const [svgHtml, setSvgHtml]       = useState('')
+  const [renderErr, setRenderErr]   = useState(false)
+  const [downloading, setDownloading] = useState(false)
+
+  useEffect(() => {
+    if (!flowchart?.mermaid) { setSvgHtml(''); setRenderErr(false); return }
+    let cancelled = false
+    setRenderErr(false)
+    const uid = `mm-fc-${Date.now()}`
+    mermaid.render(uid, flowchart.mermaid)
+      .then(({ svg }) => { if (!cancelled) setSvgHtml(svg) })
+      .catch(() => { if (!cancelled) setRenderErr(true) })
+    return () => { cancelled = true }
+  }, [flowchart?.mermaid])
+
+  // Style the rendered SVG to fill the container width
+  useEffect(() => {
+    const svg = svgContainerRef.current?.querySelector('svg')
+    if (!svg) return
+    svg.style.width = '100%'
+    svg.style.maxWidth = '100%'
+    svg.removeAttribute('height')
+  }, [svgHtml])
+
+  function handleDownload() {
+    const svg = svgContainerRef.current?.querySelector('svg')
+    if (!svg || downloading) return
+    setDownloading(true)
+
+    const serializer = new XMLSerializer()
+    const svgStr = serializer.serializeToString(svg)
+    const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+
+    const img = new Image()
+    img.onload = () => {
+      const scale = 2
+      const canvas = document.createElement('canvas')
+      canvas.width  = (svg.clientWidth  || 400) * scale
+      canvas.height = (svg.clientHeight || 300) * scale
+      const ctx = canvas.getContext('2d')!
+      ctx.scale(scale, scale)
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      ctx.drawImage(img, 0, 0)
+      URL.revokeObjectURL(url)
+      canvas.toBlob(pngBlob => {
+        if (!pngBlob) { setDownloading(false); return }
+        const link = document.createElement('a')
+        link.download = `${flowchart?.title || 'flowchart'}.png`
+        link.href = URL.createObjectURL(pngBlob)
+        link.click()
+        setTimeout(() => { URL.revokeObjectURL(link.href); setDownloading(false) }, 1000)
+      }, 'image/png')
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); setDownloading(false) }
+    img.src = url
+  }
+
+  // Don't render anything when loading is done and no flowchart was found
+  if (!loading && (!flowchart || !flowchart.has_flowchart)) return null
+
+  const typeMeta = flowchart?.flowchart_type
+    ? (FLOWCHART_TYPE_LABEL[flowchart.flowchart_type] ?? null)
+    : null
+
+  return (
+    <Panel title="Process Flowchart">
+      {loading ? (
+        <Skeleton lines={6} />
+      ) : (
+        <div className="mm-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+
+          {/* Title + type badge row */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            {flowchart!.title && (
+              <span style={{ fontSize: 11, fontWeight: 600, color: C.textSecondary, flex: 1, minWidth: 0,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {flowchart!.title}
+              </span>
+            )}
+            {typeMeta && (
+              <span style={{
+                flexShrink: 0, fontSize: 9, fontWeight: 700,
+                textTransform: 'uppercase', letterSpacing: '.07em',
+                padding: '2px 7px', borderRadius: 9999,
+                background: typeMeta.bg, border: `1px solid ${typeMeta.border}`, color: typeMeta.color,
+              }}>
+                {typeMeta.label}
+              </span>
+            )}
+          </div>
+
+          {/* SVG diagram */}
+          {renderErr ? (
+            <p style={{ fontSize: 11, color: C.textMuted, fontStyle: 'italic', margin: 0 }}>
+              Could not render diagram.
+            </p>
+          ) : svgHtml ? (
+            <div
+              ref={svgContainerRef}
+              dangerouslySetInnerHTML={{ __html: svgHtml }}
+              style={{
+                overflowX: 'auto', borderRadius: 6,
+                border: `1px solid ${C.border}`,
+                background: C.surface, padding: 8,
+              }}
+            />
+          ) : (
+            <Skeleton lines={5} />
+          )}
+
+          {/* Download button */}
+          {svgHtml && !renderErr && (
+            <button
+              onClick={handleDownload}
+              disabled={downloading}
+              style={{
+                width: '100%', fontSize: 11, fontWeight: 600,
+                padding: '6px 0', borderRadius: 6, cursor: downloading ? 'not-allowed' : 'pointer',
+                border: `1px solid ${C.border}`,
+                background: downloading ? C.borderFaint : C.surface,
+                color: downloading ? C.textDisabled : C.textSecondary,
+                transition: 'all .15s', display: 'flex', alignItems: 'center',
+                justifyContent: 'center', gap: 5,
+              }}
+            >
+              <span style={{ fontSize: 12 }}>⬇</span>
+              {downloading ? 'Downloading…' : 'Download as image'}
+            </button>
           )}
         </div>
       )}
