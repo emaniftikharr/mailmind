@@ -10,6 +10,8 @@ detect_flowchart(subject, body) -> dict
 The agent also generates ready-to-render Mermaid flowchart syntax from the
 extracted nodes and edges, so the frontend does not need a graph-layout engine.
 """
+import re
+
 from app.chains.flowchart_chain import MAX_INPUT_CHARS, get_flowchart_chain
 
 __all__ = ["detect_flowchart"]
@@ -65,6 +67,22 @@ def _coerce_edge(raw: dict, valid_ids: set) -> dict | None:
 
 
 _MAX_NODES = 8
+
+# ── Long-plan detection ───────────────────────────────────────────────────────
+
+_STEP_RE = re.compile(
+    r"(?m)^[ \t]*(?:\d+[.)]\s|[•\-\*]\s|(?:step|phase|stage)\s+\d+)",
+    re.IGNORECASE,
+)
+_COMPRESS_HINT = (
+    "\n[INSTRUCTION: This email has many steps. Group related consecutive steps "
+    "into named phases so the total node count stays between 5 and 8. "
+    "Never return more than 8 nodes.]\n\n"
+)
+
+
+def _count_steps(text: str) -> int:
+    return len(_STEP_RE.findall(text))
 
 
 # ── Mermaid generation ────────────────────────────────────────────────────────
@@ -135,7 +153,10 @@ def _synthesize_sequential_edges(nodes: list[dict], edges: list[dict]) -> list[d
 
 async def detect_flowchart(subject: str, body: str) -> dict:
     combined = f"Subject: {subject}\n\n{body}" if subject else body
-    email_text = combined[:MAX_INPUT_CHARS]
+
+    # Prepend compression hint when the email is step-heavy
+    prefix = _COMPRESS_HINT if _count_steps(combined) > _MAX_NODES else ""
+    email_text = prefix + combined[:MAX_INPUT_CHARS]
 
     try:
         raw: dict = await get_flowchart_chain().ainvoke({"email_text": email_text})

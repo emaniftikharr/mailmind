@@ -74,6 +74,8 @@ NODE COUNT
 - Minimum 3 nodes for has_flowchart=true (start + at least one step + end)
 - Maximum 8 nodes — collapse minor sub-steps into a single node rather than
   creating too many nodes
+- Long plans (>8 identifiable steps): group consecutive related steps into
+  named phases (e.g. "Steps 1–4: Research & Setup") so the total stays ≤ 8
 
 STEP INFERENCE — for emails without explicit step numbers
 - Temporal markers ("first", "then", "next", "after that", "finally", "once X")
