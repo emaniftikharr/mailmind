@@ -64,12 +64,20 @@ def _coerce_edge(raw: dict, valid_ids: set) -> dict | None:
     }
 
 
+_MAX_NODES = 8
+
+
 # ── Mermaid generation ────────────────────────────────────────────────────────
+
+def _escape_mermaid(text: str) -> str:
+    """Replace double-quotes with single-quotes so labels don't break Mermaid syntax."""
+    return text.replace('"', "'")
+
 
 def _mermaid_node_line(node: dict) -> str:
     nid   = node["id"]
-    label = node["label"]
-    desc  = node["description"]
+    label = _escape_mermaid(node["label"])
+    desc  = _escape_mermaid(node["description"])
     text  = f"{label}\\n{desc}" if desc else label
 
     ntype = node["type"]
@@ -87,12 +95,40 @@ def _to_mermaid(nodes: list[dict], edges: list[dict]) -> str:
     for node in nodes:
         lines.append(_mermaid_node_line(node))
     for edge in edges:
-        src, tgt, lbl = edge["source"], edge["target"], edge["label"]
+        src, tgt, lbl = edge["source"], edge["target"], _escape_mermaid(edge["label"])
         if lbl:
-            lines.append(f"  {src} -->|\"{lbl}\"| {tgt}")
+            lines.append(f'  {src} -->|"{lbl}"| {tgt}')
         else:
             lines.append(f"  {src} --> {tgt}")
     return "\n".join(lines)
+
+
+# ── Node / edge repair ────────────────────────────────────────────────────────
+
+def _repair_start_end(nodes: list[dict]) -> list[dict]:
+    """Guarantee exactly one start node; add an end node if none exists."""
+    starts = [i for i, n in enumerate(nodes) if n["type"] == "start"]
+    if not starts:
+        nodes[0] = {**nodes[0], "type": "start"}
+    elif len(starts) > 1:
+        for i in starts[1:]:
+            nodes[i] = {**nodes[i], "type": "step"}
+    if not any(n["type"] == "end" for n in nodes):
+        nodes[-1] = {**nodes[-1], "type": "end"}
+    return nodes
+
+
+def _synthesize_sequential_edges(nodes: list[dict], edges: list[dict]) -> list[dict]:
+    """For sequential flows, fill missing edges so every adjacent pair is connected."""
+    if len(edges) >= len(nodes) - 1:
+        return edges
+    ids = [n["id"] for n in nodes]
+    existing = {(e["source"], e["target"]) for e in edges}
+    for i in range(len(ids) - 1):
+        pair = (ids[i], ids[i + 1])
+        if pair not in existing:
+            edges.append({"source": ids[i], "target": ids[i + 1], "label": ""})
+    return edges
 
 
 # ── Public function ───────────────────────────────────────────────────────────
@@ -118,6 +154,10 @@ async def detect_flowchart(subject: str, body: str) -> dict:
     if len(nodes) < 3:
         return _FALLBACK
 
+    # Enforce 3–8 node limit; trim excess before validating edges
+    if len(nodes) > _MAX_NODES:
+        nodes = nodes[:_MAX_NODES]
+
     valid_ids = {n["id"] for n in nodes}
     edges = [
         e for item in (raw.get("edges") or [])
@@ -127,6 +167,13 @@ async def detect_flowchart(subject: str, body: str) -> dict:
     chart_type = _str(raw.get("flowchart_type"))
     if chart_type not in _VALID_CHART_TYPES:
         chart_type = "sequential"
+
+    # Repair missing start / end nodes (handles unnumbered / ambiguous step lists)
+    nodes = _repair_start_end(nodes)
+
+    # For sequential flows, synthesize any missing linear edges
+    if chart_type == "sequential":
+        edges = _synthesize_sequential_edges(nodes, edges)
 
     return {
         "has_flowchart":  True,

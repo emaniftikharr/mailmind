@@ -72,8 +72,20 @@ question, or contain an unordered list of topics without a flow between them.
 
 NODE COUNT
 - Minimum 3 nodes for has_flowchart=true (start + at least one step + end)
-- Maximum 10 nodes — collapse minor sub-steps into a single node rather than
+- Maximum 8 nodes — collapse minor sub-steps into a single node rather than
   creating too many nodes
+
+STEP INFERENCE — for emails without explicit step numbers
+- Temporal markers ("first", "then", "next", "after that", "finally", "once X")
+  → assign nodes in reading order
+- Unordered bullet list describing a logical sequence → treat as sequential,
+  order top-to-bottom
+- Gap in numbering ("1. A  2. B  4. D", step 3 missing) → skip the gap; do
+  not invent a node for the missing number
+- Ambiguous ordering ("A and B must complete before C") → add edges A→C and
+  B→C; omit A→B unless the email states it explicitly
+- Conditional language ("if", "otherwise", "in case of failure") → insert a
+  decision node even when no step number is present
 
 EXAMPLES
 
@@ -122,6 +134,25 @@ Great meeting today. Here are the takeaways:
 - Next sync is Thursday at 2pm
 
 Output: {"has_flowchart":false,"title":"","flowchart_type":null,"nodes":[],"edges":[]}
+
+Email:
+Subject: How to submit a PTO request
+First, open the HR portal and go to "Time Off". Then pick your dates and leave type.
+Once you submit, your manager gets an email to approve or decline. If approved, the
+dates are blocked in the shared calendar automatically.
+
+Output: {"has_flowchart":true,"title":"PTO Request Process","flowchart_type":"branching","nodes":[{"id":"n1","label":"Open HR Portal","type":"start","description":""},{"id":"n2","label":"Select Dates & Type","type":"step","description":""},{"id":"n3","label":"Submit Request","type":"step","description":""},{"id":"n4","label":"Manager Decision","type":"decision","description":""},{"id":"n5","label":"Time Blocked in Calendar","type":"end","description":""},{"id":"n6","label":"Request Declined","type":"end","description":""}],"edges":[{"source":"n1","target":"n2","label":""},{"source":"n2","target":"n3","label":""},{"source":"n3","target":"n4","label":""},{"source":"n4","target":"n5","label":"approved"},{"source":"n4","target":"n6","label":"declined"}]}
+
+Email:
+Subject: Vendor onboarding checklist
+To onboard a new vendor you will need to:
+- Send them our standard NDA
+- Collect their W-9 and insurance certificate
+- Create the vendor record in NetSuite
+- Get finance sign-off for any contract above $10k
+- Issue the purchase order once everything is in order
+
+Output: {"has_flowchart":true,"title":"Vendor Onboarding","flowchart_type":"sequential","nodes":[{"id":"n1","label":"Send NDA","type":"start","description":""},{"id":"n2","label":"Collect Documents","type":"step","description":"W-9 and insurance"},{"id":"n3","label":"Create Vendor Record","type":"step","description":"in NetSuite"},{"id":"n4","label":"Finance Sign-off","type":"decision","description":"contracts above $10k"},{"id":"n5","label":"Issue Purchase Order","type":"end","description":""}],"edges":[{"source":"n1","target":"n2","label":""},{"source":"n2","target":"n3","label":""},{"source":"n3","target":"n4","label":""},{"source":"n4","target":"n5","label":"approved"}]}
 """
 
 _prompt = ChatPromptTemplate.from_messages([
