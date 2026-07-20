@@ -392,6 +392,12 @@ SEP = "-" * 70
 
 def _check(em: dict, result: dict) -> list[str]:
     issues: list[str] = []
+
+    # Surface API / rate-limit errors — they silently return has_flowchart=False
+    if "error" in result:
+        issues.append(f"API error: {result['error'][:120]}")
+        return issues
+
     got = result.get("has_flowchart", False)
     exp = em["expect"]
 
@@ -443,7 +449,7 @@ async def run() -> tuple[int, int, int]:
     print(SEP)
     for em in PLAN_EMAILS:
         result = await detect_flowchart(em["subject"], em["body"])
-        await asyncio.sleep(0.4)
+        await asyncio.sleep(1.5)   # respect 70b RPM limit
         issues = _check(em, result)
         ok = not issues
 
@@ -452,7 +458,7 @@ async def run() -> tuple[int, int, int]:
         else:
             pp_fail += 1
 
-        fc    = result.get("has_flowchart", False)
+        fc     = result.get("has_flowchart", False)
         ncount = len(result.get("nodes", []))
         ftype  = result.get("flowchart_type") or "-"
         status = "PASS" if ok else "FAIL"
@@ -470,7 +476,7 @@ async def run() -> tuple[int, int, int]:
     print(SEP)
     for em in NON_PLAN_EMAILS:
         result = await detect_flowchart(em["subject"], em["body"])
-        await asyncio.sleep(0.4)
+        await asyncio.sleep(1.5)   # respect 70b RPM limit
         issues = _check(em, result)
         ok = not issues
 
@@ -479,7 +485,7 @@ async def run() -> tuple[int, int, int]:
         else:
             np_fail += 1
 
-        fc    = result.get("has_flowchart", False)
+        fc     = result.get("has_flowchart", False)
         status = "PASS" if ok else "FAIL"
         print(f"  {em['id']}  {status}  has_flowchart={fc}")
         for issue in issues:
